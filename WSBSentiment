@@ -1,0 +1,139 @@
+pip install nltk==3.3
+
+
+import warnings
+import nltk
+import numpy as np
+import pandas as pd 
+import re
+import random
+from pandas import DataFrame
+from nltk import *
+from nltk.corpus import *
+from nltk.tokenize import *
+from nltk.stem.porter import *
+nltk.download('punkt')
+nltk.download('stopwords')
+
+warnings.filterwarnings('ignore')
+
+#Create the stemmer object
+stemmer = PorterStemmer()
+#initialise training sets
+positive_tweets = twitter_samples.strings('positive_tweets.json')
+negative_tweets = twitter_samples.strings('negative_tweets.json')
+#set the training sets into a dataframe
+posTweetsdf = DataFrame(positive_tweets,columns=['text'])
+negTweetsdf = DataFrame(negative_tweets,columns=['text'])
+
+#Read the file 
+data = pd.read_csv("reddit_wsb.csv") 
+
+
+
+def cleanData(data):
+    #Loop through the data, creating a new dataframe with only ascii characters
+    data['text'] = data['text'].apply(lambda s: "".join(char for char in s if char.isascii()))
+    #Removes any words which start with @, which are replies. 
+    data['text']= data['text'].str.replace('(@\w+.*?)',"")
+    #Remove any left over characters 
+    data = data['text'].str.replace('[^\w\s]','')
+    #return the cleaned data
+    return data
+
+def removeStopwords(data):
+    #Choose the english stopwords
+    eng_stopwords = stopwords.words('english')
+    #Set the english stopwords
+    eng_stopwords = set(eng_stopwords)
+    #Create a new list/series containing only words which arent in eng_stopwords
+    result = data.apply(lambda words: [word for word in words if word.lower() not in eng_stopwords])
+    #The stemming process is built into the remove stopwords function to cut down on individual functions. 
+    #This uses the PorterStemmer, built into NLTK, to stem words. 
+    result = result.apply(lambda x: [stemmer.stem(y) for y in x])
+    return result
+
+def wordCount(data):
+    for words in data:
+        for word in words:
+            yield word
+
+#Used for modelling the tweets and posts to the correct format so as they can be fed into the Naive Bayes classifier
+def modelTweets(data):
+    for words in data:
+         yield dict([word, True] for word in words)
+            
+def toDict(word):
+     return {word : True}
+
+
+# droppeddata will store the new dataframe with the dropped columns
+
+#For now, two variables exist, one with the timestamp attached and one without, timestamp will be used in future versions
+dataTimestamped = data.drop(columns=['score', 'id','url','comms_num','created','body'])
+data = data.drop(columns=['score', 'id','url','comms_num','created','body','timestamp'])
+
+data.columns = ['text']
+# drop all rows with NaN and store in alldata
+print(data)
+
+#runs the neccesary functions which will clean the data, tokenize it and remove any stopwords.
+dataCleaned = cleanData(data)
+dataCleaned = dataCleaned.apply(word_tokenize)
+data = removeStopwords(dataCleaned)
+
+#Cleans the positive training set
+posTweetsdf = cleanData(posTweetsdf)
+posTweets = posTweetsdf.apply(word_tokenize)
+posTweets = removeStopwords(posTweets)
+
+#Cleans the negative training set
+negTweetsdf = cleanData(negTweetsdf)
+negTweets = negTweetsdf.apply(word_tokenize)
+negTweets = removeStopwords(negTweets)
+
+data = data.tolist()
+dataCount = wordCount(data)
+dataFreq = FreqDist(dataCount)
+
+negTweets = negTweets.tolist()
+negWords = wordCount(negTweets)
+negFreq = FreqDist(negWords)
+
+posTweets = posTweets.tolist()
+posWords = wordCount(posTweets)
+posFreq = FreqDist(posWords)
+
+posModel = modelTweets(posTweets)
+negModel = modelTweets(negTweets)
+testModel = modelTweets(data)
+
+posDataset = [(tweet_dict, "Positive")
+                     for tweet_dict in posModel]
+
+negDataset = [(tweet_dict, "Negative")
+                     for tweet_dict in negModel]
+
+trainingDataset = posDataset + negDataset
+random.shuffle(trainingDataset)
+trainData, testData = trainingDataset[7000:], trainingDataset[:7000]
+classifier = NaiveBayesClassifier.train(trainData)
+
+print("Accuracy :", classify.accuracy(classifier, testData))
+
+Sentiments = []
+for x in testModel:
+    Sentiments.append(classifier.classify(x))
+print(testModel)
+positive = Sentiments.count('Positive')
+negative = Sentiments.count('Negative')
+
+print("Number of positive tweets = ", positive)
+print("Number of negative tweets = ", negative)
+allposts = negative + positive
+avgneg = negative / allposts
+avgpos = positive / allposts
+
+print("Avg positive = ", avgpos)
+print("Avg negative = ", avgneg)
+classifier.show_most_informative_features()
