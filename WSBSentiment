@@ -1,12 +1,11 @@
-pip install nltk==3.3
-
-
+import datetime
 import warnings
 import nltk
 import numpy as np
 import pandas as pd 
 import re
 import random
+from datetime import timedelta, date
 from pandas import DataFrame
 from nltk import *
 from nltk.corpus import *
@@ -19,28 +18,30 @@ warnings.filterwarnings('ignore')
 
 #Create the stemmer object
 stemmer = PorterStemmer()
-#initialise training sets
-positive_tweets = twitter_samples.strings('positive_tweets.json')
-negative_tweets = twitter_samples.strings('negative_tweets.json')
+#initialise the training sets from NLTK
+positiveNLTK = twitter_samples.strings('positive_tweets.json')
+negativeNLTK = twitter_samples.strings('negative_tweets.json')
 #set the training sets into a dataframe
-posTweetsdf = DataFrame(positive_tweets,columns=['text'])
-negTweetsdf = DataFrame(negative_tweets,columns=['text'])
+posDF = DataFrame(positiveNLTK,columns=['text'])
+negDF = DataFrame(negativeNLTK,columns=['text'])
 
 #Read the file 
 data = pd.read_csv("reddit_wsb.csv") 
 
 
-
-def cleanData(data):
-    #Loop through the data, creating a new dataframe with only ascii characters
+def dataCleaning(data):
+    #Loop through the data, creating a new dataframe with only ascii characters, removing punctuation etc. 
     data['text'] = data['text'].apply(lambda s: "".join(char for char in s if char.isascii()))
     #Removes any words which start with @, which are replies. 
     data['text']= data['text'].str.replace('(@\w+.*?)',"")
+    #Remove links, or tokens starting with http 
+    data['text'] = data['text'].str.replace('http[^\s]*',"")
     #Remove any left over characters 
     data = data['text'].str.replace('[^\w\s]','')
     #return the cleaned data
     return data
 
+#Function for removing stopwords in given data
 def removeStopwords(data):
     #Choose the english stopwords
     eng_stopwords = stopwords.words('english')
@@ -67,51 +68,55 @@ def toDict(word):
      return {word : True}
 
 
+
 # droppeddata will store the new dataframe with the dropped columns
 
 #For now, two variables exist, one with the timestamp attached and one without, timestamp will be used in future versions
-dataTimestamped = data.drop(columns=['score', 'id','url','comms_num','created','body'])
+dataTime = data.drop(columns=['score', 'id','url','comms_num','created','body'])
 data = data.drop(columns=['score', 'id','url','comms_num','created','body','timestamp'])
 
 data.columns = ['text']
 # drop all rows with NaN and store in alldata
-print(data)
+dataTime['Date']=pd.to_datetime(dataTime['timestamp'])
+dataTime = dataTime.drop(columns=['timestamp'])
+dataTime['text'] = dataTime['title']
+dataTime = dataTime.drop(columns=['title'])
 
 #runs the neccesary functions which will clean the data, tokenize it and remove any stopwords.
-dataCleaned = cleanData(data)
+dataCleaned = dataCleaning(data)
 dataCleaned = dataCleaned.apply(word_tokenize)
-data = removeStopwords(dataCleaned)
+dataCleaned = removeStopwords(dataCleaned)
 
 #Cleans the positive training set
-posTweetsdf = cleanData(posTweetsdf)
-posTweets = posTweetsdf.apply(word_tokenize)
-posTweets = removeStopwords(posTweets)
+posDF = dataCleaning(posDF)
+posDF = posDF.apply(word_tokenize)
+posDF = removeStopwords(posDF)
 
 #Cleans the negative training set
-negTweetsdf = cleanData(negTweetsdf)
-negTweets = negTweetsdf.apply(word_tokenize)
-negTweets = removeStopwords(negTweets)
+negDF = dataCleaning(negDF)
+negDF = negDF.apply(word_tokenize)
+negDF = removeStopwords(negDF)
 
-data = data.tolist()
-dataCount = wordCount(data)
+dataCleaned = dataCleaned.tolist()
+dataCount = wordCount(dataCleaned)
 dataFreq = FreqDist(dataCount)
 
-negTweets = negTweets.tolist()
-negWords = wordCount(negTweets)
-negFreq = FreqDist(negWords)
+negList = negDF.tolist()
+negWords = wordCount(negList)
+negFrq = FreqDist(negWords)
 
-posTweets = posTweets.tolist()
-posWords = wordCount(posTweets)
-posFreq = FreqDist(posWords)
+posList = posDF.tolist()
+posWords = wordCount(posList)
+posFrq = FreqDist(posWords)
 
-posModel = modelTweets(posTweets)
-negModel = modelTweets(negTweets)
-testModel = modelTweets(data)
+posModel = modelTweets(posList)
+negModel = modelTweets(negList)
+testModel = modelTweets(dataCleaned)
 
-posDataset = [(tweet_dict, "Positive")
+posDataset = [(tweet_dict, 1)
                      for tweet_dict in posModel]
 
-negDataset = [(tweet_dict, "Negative")
+negDataset = [(tweet_dict, 0)
                      for tweet_dict in negModel]
 
 trainingDataset = posDataset + negDataset
@@ -124,12 +129,16 @@ print("Accuracy :", classify.accuracy(classifier, testData))
 Sentiments = []
 for x in testModel:
     Sentiments.append(classifier.classify(x))
-print(testModel)
-positive = Sentiments.count('Positive')
-negative = Sentiments.count('Negative')
 
-print("Number of positive tweets = ", positive)
-print("Number of negative tweets = ", negative)
+#Put the sentiment score in the dataframe
+scoresdf = pd.DataFrame({'Sentiment': Sentiments})
+dataTime['Sentiment'] = scoresdf['Sentiment'].values
+
+positive = Sentiments.count(1)
+negative = Sentiments.count(0)
+
+print("Number of positive posts = ", positive)
+print("Number of negative posts = ", negative)
 allposts = negative + positive
 avgneg = negative / allposts
 avgpos = positive / allposts
@@ -137,3 +146,10 @@ avgpos = positive / allposts
 print("Avg positive = ", avgpos)
 print("Avg negative = ", avgneg)
 classifier.show_most_informative_features()
+
+#Removes Hours, Minutes and seconds from dataframe
+dataTime['Date'] = pd.to_datetime(dataTime['Date']).dt.date
+#Groups entries by date and calculates the mean value of the sentiment scores
+avgScore = dataTime.groupby('Date')['Sentiment'].mean()
+    
+print("The Average sentiment = " + avgScore)
